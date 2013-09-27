@@ -41,7 +41,8 @@ setup(name='webkit-server',
       author_email='niklas.baumstark@gmail.com',
       license='MIT',
       url='https://github.com/niklasb/webkit-server',
-      py_modules=['webkit_server', 'webkit_scraper', 'capybara.js'],
+      py_modules=['webkit_server', 'webkit_scraper', ],
+      data_files=[('.', ['capybara.js',]),],
       cmdclass={
         'build': build_server,
         })
