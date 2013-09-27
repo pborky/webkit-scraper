@@ -10,3 +10,6 @@ qrc_*.cpp
 /MANIFEST
 /dist
 /build
+/webscraping
+/.idea
+*.iml
