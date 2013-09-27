@@ -25,7 +25,6 @@ import time
 from functools import partial
 from threading import Thread, Condition, Event, currentThread
 
-logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 class SelectionMixin(object):
@@ -907,6 +906,8 @@ class WebkitConnection(object):
 
 
 if __name__ == '__main__':
+    logging.basicConfig(level=logging.DEBUG)
+
     USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/28.0.1500.71 Safari/537.36'
     ACCEPT_LANG = 'en-US,en;q=0.8'
     ACCEPT = 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
