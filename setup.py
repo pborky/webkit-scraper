@@ -32,7 +32,7 @@ class build_server(_build):
       os.makedirs(self.build_purelib)
     except: pass
     shutil.copy('src/webkit_server', self.build_purelib)
-    shutil.copy('src/webkit_server', self.build_platlib)
+    shutil.copy('capybara.js', self.build_platlib)
 
 setup(name='webkit-server',
       version='0.8',
@@ -42,7 +42,6 @@ setup(name='webkit-server',
       license='MIT',
       url='https://github.com/niklasb/webkit-server',
       py_modules=['webkit_server', 'webkit_scraper', ],
-      data_files=[('.', ['capybara.js',]),],
       cmdclass={
         'build': build_server,
         })
