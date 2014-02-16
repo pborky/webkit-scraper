@@ -3,34 +3,28 @@ This is pythonic implementation of webkit-server using PyQt4.
 Based on https://github.com/niklasb/webkit-server
 """
 
-from PySide.QtCore import QObject,QThread, QSize, QUrl, QDir, QFileInfo, Property, Signal, Slot, QRect, QPoint, QEvent, Qt, QByteArray
+from PySide.QtCore import QObject, QThread, QSize, QUrl, QDir, QFileInfo, Property, Slot, QRect, QPoint, QEvent, Qt, QByteArray
 from PySide import QtNetwork
 from PySide.QtNetwork import QNetworkAccessManager,QNetworkRequest,QNetworkCookieJar,QNetworkReply, QNetworkCookie
 from PySide.QtGui import  QApplication, QImage, qRgba, QPainter, QMouseEvent
 from PySide.QtWebKit import QWebSettings, QWebPage, QWebElement
 
 from Queue import Queue, Empty
+from functools import partial
+from threading import Event
 
-
-import subprocess
 import re
 import os
-import socket
-import atexit
-import json
-import logging
 import base64
 import time
 
-from functools import partial
-from threading import Thread, Condition, Event, currentThread
-
+import logging
 logger = logging.getLogger(__name__)
 
 class SelectionMixin(object):
   """ Implements a generic XPath selection for a class providing a
   ``_get_xpath_ids`` and a ``get_node_factory`` method. """
-
+  #FIXME:
   def xpath(self, xpath):
     """ Finds another node by XPath originating at the current node. """
     nodes = self._get_xpath_ids(xpath)
@@ -39,17 +33,6 @@ class SelectionMixin(object):
     elif not nodes:
         nodes = []
     return map(self.get_node_factory().create, filter(None, nodes))
-
-class NodeFactory(object):
-  """ Implements the default node factory.
-
-  `client` is the associated client instance. """
-
-  def __init__(self, client):
-    self.client = client
-
-  def create(self, node_id):
-    return Node(self.client, node_id)
 
 class NodeError(Exception):
   """ A problem occured within a ``Node`` instance method. """
@@ -203,6 +186,18 @@ class Node(SelectionMixin):
   def _invoke(self, cmd, *args):
     return self.client.issue_node_cmd(cmd, self.node_id, *args)
 
+class NodeFactory(object):
+    """ Implements the default node factory.
+
+    `client` is the associated client instance. """
+    _Node = Node
+
+    def __init__(self, client):
+        self.client = client
+
+    def create(self, node_id):
+        return self._Node(self.client, node_id)
+
 # client commands
 class Command(object):
     def __init__(self, callable, *args, **kwargs):
@@ -222,6 +217,9 @@ class Command(object):
     def _invoke(self, cmd, *args, **kwargs):
         self.result = cmd(*args, **kwargs)
         self.event.set()
+class NewPage(Command):
+    def __init__(self,):
+        super(NewPage, self).__init__(WebPage,)
 class Visit(Command):
     def __init__(self, url):
         super(Visit, self).__init__(WebPage.load, url)
@@ -292,11 +290,8 @@ class Find(Command):
     def __init__(self, xpath):
         super(Find, self).__init__(WebPage.invokeCapybaraFunction, 'find', xpath)
 
-class Client(SelectionMixin):
+class WebPageStub(SelectionMixin):
     """ Wrappers for the webkit_server commands.
-
-    If `connection` is not specified, a new instance of ``ServerConnection`` is
-    created.
 
     `node_factory_class` can be set to a value different from the default, in which
     case a new instance of the given class will be used to create nodes. The given
@@ -304,85 +299,86 @@ class Client(SelectionMixin):
     ``create`` method that takes a node ID as an argument and returns a node object.
     """
 
-    def __init__(self,
-                 connection = None,
-                 node_factory_class = NodeFactory):
-        super(Client, self).__init__()
-        self.conn = connection or WebkitConnection()
+    def __init__(self, node_factory_class = NodeFactory):
+        super(WebPageStub, self).__init__()
+        self._conn = WebkitConnection()
         self._node_factory = node_factory_class(self)
+
+    def stop(self):
+        self._conn.stop()
 
     def visit(self, url):
         """ Goes to a given URL. """
-        return self.conn.issue_command(Visit, url)
+        return self._conn.issue_command(Visit, url)
 
     def body(self):
         """ Returns the current DOM as HTML. """
-        return self.conn.issue_command(Body,)
+        return self._conn.issue_command(Body,)
 
     def source(self):
         """ Returns the source of the page as it was originally
         served by the web server. """
-        return self.conn.issue_command(Source,)
+        return self._conn.issue_command(Source,)
 
     def wait(self):
         """ Waits for the current page to load. """
-        return self.conn.issue_command(Wait,)
+        return self._conn.issue_command(Wait,)
 
     def url(self):
         """ Returns the current location. """
-        return self.conn.issue_command(Url,)
+        return self._conn.issue_command(Url,)
 
     def set_header(self, key, value):
         """ Sets a HTTP header for future requests. """
-        return self.conn.issue_command(Header, key, value)
+        return self._conn.issue_command(Header, key, value)
 
     def reset(self):
         """ Resets the current web session. """
-        return self.conn.issue_command(Reset,)
+        return self._conn.issue_command(Reset,)
 
     def status_code(self):
         """ Returns the numeric HTTP status of the last response. """
-        return int(self.conn.issue_command(Status,))
+        return int(self._conn.issue_command(Status,))
 
     def headers(self):
         """ Returns a dict of the last HTTP response headers. """
-        return self.conn.issue_command(Headers,)
+        return self._conn.issue_command(Headers,)
 
     def eval_script(self, expr):
         """ Evaluates a piece of Javascript in the context of the current page and
         returns its value. """
         #TODO response parsing needed
-        return self.conn.issue_command(Evaluate, expr)
+        return self._conn.issue_command(Evaluate, expr)
 
     def exec_script(self, script):
         """ Executes a piece of Javascript in the context of the current page. """
-        return self.conn.issue_command(Execute, script)
+        return self._conn.issue_command(Execute, script)
 
     def render(self, path, width = 1024, height = 1024):
         """ Renders the current page to a PNG file (viewport size in pixels). """
-        return self.conn.issue_command(Render, path, width, height)
+        return self._conn.issue_command(Render, path, width, height)
 
     def set_viewport_size(self, width, height):
         """ Sets the viewport size. """
-        return self.conn.issue_command(SetViewportSize, width, height)
+        return self._conn.issue_command(SetViewportSize, width, height)
 
     def set_cookie(self, cookie):
         """ Sets a cookie for future requests (must be in correct cookie string  format). """
-        return self.conn.issue_command(SetCookie, cookie)
+        return self._conn.issue_command(SetCookie, cookie)
 
     def clear_cookies(self):
         """ Deletes all cookies. """
-        return self.conn.issue_command(ClearCookies,)
+        return self._conn.issue_command(ClearCookies,)
 
     def cookies(self):
         """ Returns a list of all cookies in cookie string format. """
-        return filter(None, (line.strip() for line in self.conn.issue_command(GetCookies,)))
+        return filter(None, (line.strip() for line in self._conn.issue_command(GetCookies,)))
 
     def set_error_tolerant(self, tolerant=True):
         """ Sets or unsets the error tolerance flag in the server. If this flag
         is set, dropped requests or erroneous responses will not lead to an error! """
         value = "true" if tolerant else "false"
-        return self.conn.issue_command(SetErrorTolerance, value)
+        return self._conn.issue_command(SetErrorTolerance, value)
 
     def set_attribute(self, attr, value = True):
         """ Sets a custom attribute for our Webkit instance. Possible attributes are:
@@ -407,35 +403,35 @@ class Client(SelectionMixin):
         <http://developer.qt.nokia.com/doc/qt-4.8/qwebsettings.html#WebAttribute-enum>`_.
         """
         value = "true" if value else "false"
-        return self.conn.issue_command(SetAttribute, self._normalize_attr(attr), value)
+        return self._conn.issue_command(SetAttribute, self._normalize_attr(attr), value)
 
     def reset_attribute(self, attr):
         """ Resets a custom attribute. """
-        return self.conn.issue_command(SetAttribute, self._normalize_attr(attr), "reset")
+        return self._conn.issue_command(SetAttribute, self._normalize_attr(attr), "reset")
 
     def set_html(self, html, url = None):
         """ Sets custom HTML in our Webkit session and allows to specify a fake URL.
         Scripts and CSS is dynamically fetched as if the HTML had been loaded from
         the given URL. """
         if url:
-            return self.conn.issue_command(SetHtml, html, url)
+            return self._conn.issue_command(SetHtml, html, url)
         else:
-            return self.conn.issue_command(SetHtml, html)
+            return self._conn.issue_command(SetHtml, html)
 
     def set_proxy(self, host     = "localhost",
                   port     = 0,
                   user     = "",
                   password = ""):
         """ Sets a custom HTTP proxy to use for future requests. """
-        return self.conn.issue_command(SetProxy, host, port, user, password)
+        return self._conn.issue_command(SetProxy, host, port, user, password)
 
     def clear_proxy(self):
         """ Resets custom HTTP proxy (use none in future requests). """
-        return self.conn.issue_command(ClearProxy, )
+        return self._conn.issue_command(ClearProxy, )
 
     def issue_node_cmd(self, *args):
         """ Issues a node-specific command. """
-        return self.conn.issue_command(Node_, *args)
+        return self._conn.issue_command(Node_, *args)
 
     def get_node_factory(self):
         """ Returns the associated node factory. """
@@ -443,7 +439,7 @@ class Client(SelectionMixin):
 
     def _get_xpath_ids(self, xpath):
         """ Implements a mechanism to get a list of node IDs for an absolute XPath query. """
-        return self.conn.issue_command(Find, xpath)
+        return self._conn.issue_command(Find, xpath)
 
     def _normalize_attr(self, attr):
         """ Transforms a name like ``auto_load_images`` into ``AutoLoadImages``
@@ -453,16 +449,8 @@ class Client(SelectionMixin):
 class NoX11Error(Exception):
   """ Raised when the Webkit server cannot connect to X. """
 
-class NoResponseError(Exception):
-  """ Raised when the Webkit server does not respond. """
-
-class InvalidResponseError(Exception):
-  """ Raised when the Webkit server signaled an error. """
-
-class EndOfStreamError(Exception):
-  """ Raised when the Webkit server closed the connection unexpectedly. """
-
 class NetworkAccessManager(QNetworkAccessManager):
+    """ Custom network manager to override request with custom headers."""
     def __init__(self, *args, **kwargs):
         QNetworkAccessManager.__init__(self, *args, **kwargs)
         self.headers = {}
@@ -478,6 +466,7 @@ class NetworkAccessManager(QNetworkAccessManager):
         self.headers[key] = value
 
 class NetworkCookieJar(QNetworkCookieJar):
+    """ Custom cookie jar to override cookies. """
     def getAllCookies(self):
         return self.allCookies()
     def clearCookies(self):
@@ -486,83 +475,9 @@ class NetworkCookieJar(QNetworkCookieJar):
         pass
         #TODO: implement overwriting
 
-class QObjectFactory(QObject):
-    """ Factory for creation of QObject in own thread.
-     """
-    def __init__(self):
-        QObject.__init__(self)
-        self._list = []
-    def __del__(self):
-        for obj in self._list:
-            if hasattr(obj,'stop'):
-                obj.stop()
-            else:
-                del obj
-    def new(self, cls, *args, **kwargs):
-        obj = cls(*args, **kwargs)
-        self._list.append(obj)
-        return obj.result() if hasattr(obj, 'result') else obj
-
-class QObjectRunner(QObject):
-    """ QObjectRunner should be used for creation of QObject in own QThread. """
-    def __init__(self, cls, *args, **kwargs):
-        QObject.__init__(self)
-        self._thread = QThread()
-        self.moveToThread(self._thread)
-        self._thread.run = self._run
-        self._ev = Event()
-        self._ev.clear()
-        self._destroying = Event()
-        self._destroying.clear()
-        self._cls = cls
-        self._args= args
-        self._kwargs = kwargs
-        self._start()
-    def __del__(self):
-        self.stop() # perform polite disposal of resources
-        self._destroying.set() # terminate loop
-        if self._thread.isRunning():
-            self._thread.wait(1000) # wait 1 sec
-            self._thread.terminate() # no-way
-    def _run(self):
-        self._result = self._cls(*self._args, **self._kwargs)
-        self._ev.set()
-        self.loop()
-    def _start(self):
-        self._thread.start()
-    def loop(self):
-        while not self._destroying.is_set():
-            pass
-    def stop(self):
-        pass
-    def result(self):
-        self._ev.wait()
-        return self._result if hasattr(self, '_result') else None
-
-class QAppRunner(QObjectRunner):
-    def __init__(self, *args, **kwargs):
-        QObjectRunner.__init__(self, QApplication, *args, **kwargs)
-    def loop(self):
-        self._result.exec_()
-    def stop(self):
-        self._result.exit()
-
-class QPageRunner(QObjectRunner):
-    def __init__(self, app=None):
-        self._commandQueue = Queue()
-        self._app = app
-        QObjectRunner.__init__(self, WebPage, app=app, commandQueue=self._commandQueue)
-    def loop(self):
-        while not self._destroying.is_set():
-            self._app.processEvents()
-            try:
-                cmd = self._commandQueue.get(timeout=0.1)
-                cmd(self._result)
-            except Empty:
-                pass
-
 class WebPage(QWebPage):
-    def __init__(self, app, commandQueue):
+    """ Customized Web page. Based on capybara webkit server. Reimplemented in python. """
+    def __init__(self, app):
         self.app = app
         QWebPage.__init__(self)
 
@@ -592,7 +507,6 @@ class WebPage(QWebPage):
         self.loadProgress.connect(self._loadProgressCallback)
 
         self.setViewportSize(QSize(1680, 1050))
-        self._commandQueue = commandQueue
 
     def _setCustomNetworkAccessManager(self):
         manager = NetworkAccessManager()
@@ -603,16 +517,6 @@ class WebPage(QWebPage):
         manager.finished.connect(self._replyFinishedCallbak)
         #manager.requestCreated.connect(manager.requestCreated)
         manager.sslErrors.connect(self._ignoreSslErrorsCallback)
-
-    def invokeCommand(self, cmd, *args, **kwargs):
-        if not isinstance(cmd,Command):
-            cmd = Command(cmd, *args, **kwargs)
-        cmd.event.clear()
-        self._commandQueue.put(cmd)
-        while not cmd.event.is_set():
-            self.app.processEvents()
-            cmd.event.wait(0.1)
-        return cmd.result
 
     def load(self, url):
         self.mainFrame().load(QUrl(url))
@@ -856,27 +760,138 @@ class WebPage(QWebPage):
     def invokeJavascript(self, expr):
         return self.mainFrame().evaluateJavaScript(expr)
 
+class Application(QApplication):
+    """ Nothing yet here """
+    def __init__(self):
+        QApplication.__init__(self, [])
+
+class QApplicationRunner(QObject):
+    """ Application runner starts application in own thread """
+    def __init__(self):
+        QObject.__init__(self)
+        self._thread = QThread()
+        self.moveToThread(self._thread)
+        self._thread.started.connect(self.start)
+        self._ev = Event()
+        self._app = None
+        self._thread.start()
+
+    @Slot()
+    def start(self):
+        self.app = Application()
+        self._ev.set()
+        self.app.exec_()
+
+    def exit(self):
+        self.app.exit() # perform polite disposal of resources
+        if self._thread.isRunning():
+            self._thread.wait(1000) # wait 1 sec
+            self._thread.terminate() # no-way
+
+    def _getApp(self):
+        if not self._ev.isSet():
+            self._ev.wait()
+        return self._app
+    def _setApp(self, app):
+        self._app = app
+    app = Property(Application, _getApp, _setApp)
+
+class QWebPageRunner(QObject):
+    """ Web page runner starts WebPage instances in one separate thread and implements custom event loop. """
+    #FIXME: consider using QEventLoop instead
+    def __init__(self, app):
+        QObject.__init__(self)
+        self._thread = QThread()
+        self.moveToThread(self._thread)
+        self._thread.started.connect(self.start)
+        self._destroying = Event()
+        self._destroying.clear()
+        self._result = None
+        self._commandQueue = Queue()
+        self._app = app
+        self._thread.start()
+
+    @Slot()
+    def start(self):
+        try:
+            while not self._destroying.is_set():
+                self._app.processEvents()
+                try:
+                    cmd = self._commandQueue.get(timeout=0.1)
+                    args = ()
+                    if isinstance(cmd, tuple):
+                        if not len(cmd):
+                            continue
+                        args = cmd[1:]
+                        cmd = cmd[0]
+                    if isinstance(cmd, NewPage):
+                        args = (self._app,)
+                    if isinstance(cmd, Command):
+                        cmd(*args)
+                    else:
+                        raise ValueError('Unknown command %s(%s).' % (cmd, args))
+                except Empty:
+                    pass
+        except Exception as e:
+            logger.exception(e)
+
+    def exit(self):
+        self._destroying.set()
+        if self._thread.isRunning():
+            self._thread.wait(1000) # wait 1 sec
+            self._thread.terminate() # no-way
+
+    def invoke(self, cmd, *args):
+        if isinstance(cmd, type) and issubclass(cmd, Command):
+            cmd = cmd()
+        if not isinstance(cmd, Command):
+            cmd = Command(cmd)
+        cmd.event.clear()
+        self._commandQueue.put((cmd,)+args)
+        while not cmd.event.is_set():
+            self._app.processEvents()
+            cmd.event.wait(0.1)
+        return cmd.result
+
 class PageFactory:
-    objFactory = QObjectFactory()
-    app = objFactory.new(QAppRunner, [])
+    """ Static class for creation of singleton app and page runner. """
+    _app = None
+    _page = None
+    @classmethod
+    def appRunner(cls):
+        if cls._app is None:
+            cls._app = QApplicationRunner()
+        return cls._app
+    @classmethod
+    def app(cls):
+        return cls.appRunner().app
     @classmethod
     def page(cls):
-        return cls.objFactory.new(QPageRunner, cls.app)
+        return cls.pageRunner().invoke(NewPage)
     @classmethod
-    def stop(cls):
-        del cls.objFactory
-
+    def pageRunner(cls):
+        if cls._page is None:
+            cls._page = QWebPageRunner(cls.app())
+        return cls._page
+    @classmethod
+    def exit(cls):
+        cls.pageRunner().exit()
+        cls.appRunner().exit()
 
 class WebkitConnection(object):
-
-    def __init__(self, page = None):
-
-        self.page = page or PageFactory.page()
-
+    """ Creates and interacts with WebPage using the page runner. """
+    def __init__(self):
+        self.pagerunner =  PageFactory.pageRunner()
+        self.page = PageFactory.page()
+        self.commands = dict((Cls.__name__,Cls) for Cls in Command.__subclasses__())
+    def stop(self):
+        del self.page
     def issue_command(self, cmd, *args):
         """ Sends and receives a message to/from the server """
-        Cls = cmd # if isinstance(cmd, Command) else getattr(commands, cmd)
-        return self._to_py_object(self.page.invokeCommand(Cls(*args)))
+        if not isinstance(cmd, Command):
+            Cls = cmd if issubclass(cmd, Command) else self.commands.get(cmd)
+            cmd = Cls(*args)
+        return self._to_py_object(self.pagerunner.invoke(cmd, self.page))
 
     def _to_py_object(self, qObj):
         if qObj is None:
@@ -911,7 +926,7 @@ if __name__ == '__main__':
     USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/28.0.1500.71 Safari/537.36'
     ACCEPT_LANG = 'en-US,en;q=0.8'
     ACCEPT = 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
-    c = Client()
+    c = WebPageStub()
 
     c.set_header('user-agent',USER_AGENT)
     c.set_header('accept-language', ACCEPT_LANG)
