@@ -193,6 +193,10 @@ Capybara = {
     this.trigger(index, "change");
   },
 
+  close : function () {
+      window.close()
+  },
+
   centerPostion: function(element) {
     this.reflow(element);
     var rect = element.getBoundingClientRect();

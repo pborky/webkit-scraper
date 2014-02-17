@@ -5,9 +5,9 @@ Based on https://github.com/niklasb/webkit-server
 
 from PySide.QtCore import QObject, QThread, QSize, QUrl, QDir, QFileInfo, Property, Slot, QRect, QPoint, QEvent, Qt, QByteArray
 from PySide import QtNetwork
-from PySide.QtNetwork import QNetworkAccessManager,QNetworkRequest,QNetworkCookieJar,QNetworkReply, QNetworkCookie
+from PySide.QtNetwork import QNetworkAccessManager,QNetworkRequest,QNetworkCookieJar,QNetworkReply, QNetworkCookie, QSslError
 from PySide.QtGui import  QApplication, QImage, qRgba, QPainter, QMouseEvent
-from PySide.QtWebKit import QWebSettings, QWebPage, QWebElement
+from PySide.QtWebKit import QWebSettings, QWebPage, QWebElement, QWebFrame
 
 from Queue import Queue, Empty
 from functools import partial
@@ -24,7 +24,6 @@ logger = logging.getLogger(__name__)
 class SelectionMixin(object):
   """ Implements a generic XPath selection for a class providing a
   ``_get_xpath_ids`` and a ``get_node_factory`` method. """
-  #FIXME:
   def xpath(self, xpath):
     """ Finds another node by XPath originating at the current node. """
     nodes = self._get_xpath_ids(xpath)
@@ -206,13 +205,17 @@ class Command(object):
         self._kwargs = kwargs
         self.event = Event()
     def __call__(self, obj = None):
-        if callable(self._callable):
-            if obj:
-                return self._invoke(self._callable, obj, *self._args, **self._kwargs)
-            else:
-                return self._invoke(self._callable, *self._args, **self._kwargs)
-        elif obj:
-            return self._invoke(getattr(obj, self._callable), obj, *self._args, **self._kwargs)
+        logger.info('issued command: %s(%s)'%(self.__class__.__name__, ', '.join(map(str,self._args))))
+        try:
+            if callable(self._callable):
+                if obj:
+                    return self._invoke(self._callable, obj, *self._args, **self._kwargs)
+                else:
+                    return self._invoke(self._callable, *self._args, **self._kwargs)
+            elif obj:
+                return self._invoke(getattr(obj, self._callable), obj, *self._args, **self._kwargs)
+        finally:
+            pass # logger.debug('issued command: %s(%s) ~> %s'%(self.__class__.__name__, ', '.join(map(str,self._args)),self.result))
         raise Exception('You must provide calable or instance member.')
     def _invoke(self, cmd, *args, **kwargs):
         self.result = cmd(*args, **kwargs)
@@ -482,64 +485,69 @@ class WebPage(QWebPage):
         QWebPage.__init__(self)
 
         self.setForwardUnsupportedContent(True)
-        self._setUserStylesheet()
+        self.setUserStylesheet()
 
         self._loading = False
         self._navigationRequest = False
         self._loading_ev = Event()
         self._userAgent = None
         self._consoleMessages = []
-        self._capybaraJavascript = self._loadCapybaraJavascript()
+        self._capybaraJavascript = self.loadCapybaraJavascript()
         self._error = None
         self._lastStatus = None
         self._pageHeaders = {}
         self._errorTolerant = False
         self._ignoreSslErrors = False
 
-        self._setCustomNetworkAccessManager()
+        self.setCustomNetworkAccessManager()
 
-        self.frameCreated.connect(self._frameCreatedCallback)
-        self.unsupportedContent.connect(self._unsupportedContentCallback)
+        self.frameCreated.connect(self.frameCreatedCallback)
+        self.unsupportedContent.connect(self.unsupportedContentCallback)
 
-        self.setLinkDelegationPolicy(WebPage.DelegateAllLinks)
-        self.linkClicked.connect(self._linkClickedCallback)
+        #self.setLinkDelegationPolicy(WebPage.DelegateAllLinks)
+        #self.linkClicked.connect(self.linkClickedCallback)
 
-        self.loadProgress.connect(self._loadProgressCallback)
+        self.loadProgress.connect(self.pageLoadProgressCallback)
+        self.windowCloseRequested.connect(self.windowCloseRequestedCallback)
 
         self.setViewportSize(QSize(1680, 1050))
+    def  __del__(self):
+        logger.debug('Disposal of WebPage instance.')
 
-    def _setCustomNetworkAccessManager(self):
+    def setCustomNetworkAccessManager(self):
         manager = NetworkAccessManager()
         jar = NetworkCookieJar()
         manager.setCookieJar(jar)
         self.setNetworkAccessManager(manager)
 
-        manager.finished.connect(self._replyFinishedCallbak)
+        manager.finished.connect(self.replyFinishedCallbak)
         #manager.requestCreated.connect(manager.requestCreated)
-        manager.sslErrors.connect(self._ignoreSslErrorsCallback)
+        manager.sslErrors.connect(self.ignoreSslErrorsCallback)
 
     def load(self, url):
         self.mainFrame().load(QUrl(url))
     def html(self):
         return unicode(self.currentFrame().toHtml())
     def wait(self):
+        logger.debug('waiting')
         iter = 10
         if self._loading:
             while not self._loading_ev.is_set() and iter:
                 self.app.processEvents()
                 self._loading_ev.wait(0.1)
                 iter = iter - 1 if not self._navigationRequest else 100
-        return self.failureString()
+        return self.failureString
     def baseUrl(self):
         return self.mainFrame().baseUrl()
     def setHeader(self, key, value):
         if re.match(r'^user[-_]agent$',key.lower()):
-            self.setUserAgent(value)
+            self.userAgent = value
         else:
             self.networkAccessManager().addHeader(key, value)
     def setAttribute(self, attr, value):
-        if not getattr(QWebSettings,attr):
+        if not hasattr(QWebSettings,attr):
             raise AttributeError('No such attribute: %s' % attr)
+        attr = getattr(QWebSettings,attr)
         if value != 'reset':
             self.settings().setAttribute(attr, value != 'false')
         else:
@@ -560,8 +568,8 @@ class WebPage(QWebPage):
     def reset(self):
         self.triggerAction(WebPage.Stop)
         self.currentFrame().setHtml("<html><body></body></html>")
-        self._setCustomNetworkAccessManager()
-        self.setUserAgent(None)
+        self.setCustomNetworkAccessManager()
+        self.userAgent = None
         self.resetResponseHeaders()
         self.resetConsoleMessages()
         self.resetSettings()
@@ -591,9 +599,11 @@ class WebPage(QWebPage):
         self.setViewportSize(viewportSize)
 
         return buffer.save(fileName)
+    def createPlugin(self, classid, url, paramNames, paramValues):
+        logger.warn('application/x-qt-plugin encountered: classid=%s url=%s' % ( classid,  WebkitConnection.toPyObject(url) ))
     def acceptNavigationRequest(self, frame, request, type):
         self._navigationRequest = True
-        logger.debug('navigate ' + request.url().toString())
+        logger.debug('navigate %s' % WebkitConnection.toPyObject(request.url()).ecode('utf-8'))
         return QWebPage.acceptNavigationRequest(self, frame, request, type)
     def userAgentForUrl(self, url):
         if self._userAgent:
@@ -618,47 +628,70 @@ class WebPage(QWebPage):
     def javaScriptPrompt(self, frame, message, defaultValue, result):
         logger.debug('PROMPT: %s'%message)
         return False
-
-    def  __del__(self):
-        try:
-            self.app.quit()
-        except Exception as e:
-            logger.error('Exception during disposal of WebPage instance:',e)
+    @property
     def isLoading(self):
         return self._loading
+    @property
     def failureString(self):
         return self._error
+    @property
     def consoleMessages(self):
         return '\n'.join(self._consoleMessages)
-    def setUserAgent(self, userAgent):
+    @property
+    def userAgent(self):
+        return self._userAgent
+    @userAgent.setter
+    def userAgent(self, userAgent):
         self._userAgent = userAgent
-    def handleEvents(self):
-        self.app.exec_()
-    def _loadCapybaraJavascript(self):
+    @property
+    def ignoreSslErrors(self):
+        return self._ignoreSslErrors
+    @ignoreSslErrors.setter
+    def ignoreSslErrors(self, value):
+        self._ignoreSslErrors = value
+    @property
+    def errorTolerant(self):
+        return self._errorTolerant
+    @errorTolerant.setter
+    def errorTolerant(self, value):
+        self._errorTolerant = value
+    #def handleEvents(self):
+    #    self.app.exec_()
+    def loadCapybaraJavascript(self):
         fn = os.path.join(os.path.dirname(__file__), 'capybara.js')
         f = open(fn,'r')
         try:
             return '\n'.join((f.readlines()))
         finally:
             f.close()
-    def _setUserStylesheet(self):
+    def setUserStylesheet(self):
         data = base64.b64encode("* { font-family: 'Arial' ! important; }")
         url = QUrl("data:text/css;charset=utf-8;base64," + data)
         self.settings().setUserStyleSheetUrl(url)
-    def _linkClickedCallback(self, url):
-        logger.debug('clicked '+ url)
+    @Slot(QUrl)
+    def linkClickedCallback(self, url):
+        logger.debug('clicked %s' % WebkitConnection.toPyObject(url).encode('utf-8'))
         self._loading = True
         self._error = None
         self._loading_ev.clear()
-    def _loadStartedCallback(self):
+    @Slot()
+    def loadStartedCallback(self):
         logger.debug('started loading')
         self._loading = True
         self._error = None
         self._loading_ev.clear()
         #self.app.exec_()
-    def _loadProgressCallback(self, progress):
+    @Slot(int)
+    def pageLoadProgressCallback(self, progress):
         logger.debug('progress: %d' % progress)
-    def _loadFinishedCallback(self, result):
+    @Slot()
+    def pageLoadStartedCallback(self):
+        pass
+    @Slot(bool)
+    def pageLoadFinishedCallback(self):
+        pass
+    @Slot(bool)
+    def loadFinishedCallback(self, result):
         logger.debug('finished loading')
         self._loading = False
         self._navigationRequest = False
@@ -668,17 +701,21 @@ class WebPage(QWebPage):
         self._loading_ev.set()
         #self.app.quit()
         return result
-    def _frameCreatedCallback(self, frame):
+    @Slot(QWebFrame)
+    def frameCreatedCallback(self, frame):
         logger.debug('new frame' )
-        frame.loadStarted.connect(self._loadStartedCallback)
-        frame.loadFinished.connect(self._loadFinishedCallback)
-        frame.javaScriptWindowObjectCleared.connect(partial(self._injectJavascriptHelpersCallback, frame))
-    def _injectJavascriptHelpersCallback(self, frame):
-        frame.evaluateJavaScript(self._capybaraJavascript)
-    def _replyFinishedCallbak(self, reply):
+        frame.loadStarted.connect(self.loadStartedCallback)
+        frame.loadFinished.connect(self.loadFinishedCallback)
+        frame.javaScriptWindowObjectCleared.connect(self.injectJavascriptHelpersCallback)
+    @Slot()
+    def injectJavascriptHelpersCallback(self):
+        logger.debug('injecting capybara')
+        self.mainFrame().evaluateJavaScript(self._capybaraJavascript)
+    @Slot(QNetworkReply)
+    def replyFinishedCallbak(self, reply):
         if reply.error() != QNetworkReply.NoError:
             self._error = 'Error while loading URL %s: %s (error code %s)' % (
-                reply.url(),
+                reply.url().toString(),
                 reply.errorString(),
                 reply.error(),
                 )
@@ -687,32 +724,34 @@ class WebPage(QWebPage):
         if reply.url() == self.currentFrame().url():
             self._lastStatus = reply.attribute(QNetworkRequest.HttpStatusCodeAttribute)
             self._pageHeaders = dict( (key, reply.rawHeader(key)) for key in reply.rawHeaderList() )
-
-    def _ignoreSslErrorsCallback(self, reply, errors):
-        if self._ignoreSslErrors:
+    @Slot(QNetworkReply,QSslError)
+    def ignoreSslErrorsCallback(self, reply, errors):
+        if self.ignoreSslErrors:
             reply.ignoreSslErrors(errors)
-    def _unsupportedContentCallback(self, reply):
-        reply.finished.connect(partial(self._handleUnsupportedContentCallback, reply))
-        self.loadFinished.disconnect(self._loadFinishedCallback)
-    def _handleUnsupportedContentCallback(self, reply):
+    @Slot(QNetworkReply)
+    def unsupportedContentCallback(self, reply):
+        reply.finished.connect(partial(self.handleUnsupportedContentCallback, reply))
+        self.loadFinished.disconnect(self.loadFinishedCallback)
+    @Slot()
+    def windowCloseRequestedCallback(self):
+        return True
+    #@Slot()
+    def handleUnsupportedContentCallback(self, reply):
+        print '***** reply='%reply
         contentMimeType = reply.header(QNetworkRequest.ContentTypeHeader)
         if contentMimeType is None:
-            self._finish(reply, False)
+            self.finish(reply, False)
         else:
             text = reply.readAll()
             self.mainFrame().setContent(text, 'text/plain', reply.url())
-            self._finish(reply, True)
-        self.deleteLater()
-    def _finish(self, reply, success):
-        self.loadFinished.connect(self._loadFinishedCallback)
-        self._replyFinishedCallbak(reply)
-        self._loadFinishedCallback(success)
-    def setIgnoreSslErrors(self, value):
-        self._ignoreSslErrors = value
-    def ignoreSslErrors(self):
-        return self._ignoreSslErrors
+            self.finish(reply, True)
+        #self.deleteLater()
+    def finish(self, reply, success):
+        self.loadFinished.connect(self.loadFinishedCallback)
+        self.replyFinishedCallbak(reply)
+        self.loadFinishedCallback(success)
     def setErrorTolerant(self,value):
-        self._errorTolerant = value
+        self.errorTolerant = value
     def getLastStatus(self):
         return self._lastStatus
     def resetResponseHeaders(self):
@@ -751,7 +790,7 @@ class WebPage(QWebPage):
             event = QMouseEvent(QEvent.MouseButtonRelease,mousePos, Qt.LeftButton, Qt.LeftButton, Qt.NoModifier)
             self._view.app.sendEvent(self._view, event)
             href = element.attribute('href') if element.hasAttribute('href') else ''
-            self._view._linkClickedCallback(href)
+            #self._view.linkClickedCallback(href)
 
     def invokeCapybaraFunction(self, name, *args):
         obj = WebPage.CapybaraInvocation(self, name, *args)
@@ -759,6 +798,8 @@ class WebPage(QWebPage):
         return self.invokeJavascript('Capybara.invoke()')
     def invokeJavascript(self, expr):
         return self.mainFrame().evaluateJavaScript(expr)
+    def stop(self):
+        self.invokeCapybaraFunction('close')
 
 class Application(QApplication):
     """ Nothing yet here """
@@ -788,13 +829,14 @@ class QApplicationRunner(QObject):
             self._thread.wait(1000) # wait 1 sec
             self._thread.terminate() # no-way
 
-    def _getApp(self):
+    @property
+    def app(self):
         if not self._ev.isSet():
             self._ev.wait()
         return self._app
-    def _setApp(self, app):
+    @app.setter
+    def app(self, app):
         self._app = app
-    app = Property(Application, _getApp, _setApp)
 
 class QWebPageRunner(QObject):
     """ Web page runner starts WebPage instances in one separate thread and implements custom event loop. """
@@ -885,15 +927,16 @@ class WebkitConnection(object):
         self.page = PageFactory.page()
         self.commands = dict((Cls.__name__,Cls) for Cls in Command.__subclasses__())
     def stop(self):
-        del self.page
+        self.page.stop()
     def issue_command(self, cmd, *args):
         """ Sends and receives a message to/from the server """
         if not isinstance(cmd, Command):
             Cls = cmd if issubclass(cmd, Command) else self.commands.get(cmd)
             cmd = Cls(*args)
-        return self._to_py_object(self.pagerunner.invoke(cmd, self.page))
+        return self.toPyObject(self.pagerunner.invoke(cmd, self.page))
 
-    def _to_py_object(self, qObj):
+    @classmethod
+    def toPyObject(cls, qObj):
         if qObj is None:
             return None
 
@@ -902,16 +945,16 @@ class WebkitConnection(object):
         #    #return QObj.toPyObject()
 
         if isinstance(qObj, (QUrl,)):
-            return self._to_py_object(qObj.toString())
+            return cls.toPyObject(qObj.toString())
 
         if isinstance(qObj, (QByteArray, QUrl)):
             return unicode(qObj)
 
         if isinstance(qObj, (dict, )):
-            return dict((self._to_py_object(k),self._to_py_object(v)) for k,v in qObj.iteritems())
+            return dict((cls.toPyObject(k),cls.toPyObject(v)) for k,v in qObj.iteritems())
 
         if isinstance(qObj, (list, tuple, )):
-            return map(self._to_py_object, qObj)
+            return map(cls.toPyObject, qObj)
 
         if isinstance(qObj, (int, float, bool, unicode, str)):
             return  qObj

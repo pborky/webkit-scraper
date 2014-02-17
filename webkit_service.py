@@ -58,6 +58,6 @@ class WebkitService(_WebkitService): pass
 
 if __name__ == '__main__':
 
-    logging.basicConfig(level=logging.DEBUG)
+    logging.basicConfig(format='%(levelname)s:%(message)s',level=logging.INFO)
     t = ThreadedServer(WebkitService, port = 18861)
     t.start()
