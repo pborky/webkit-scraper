@@ -603,7 +603,7 @@ class WebPage(QWebPage):
         logger.warn('application/x-qt-plugin encountered: classid=%s url=%s' % ( classid,  WebkitConnection.toPyObject(url) ))
     def acceptNavigationRequest(self, frame, request, type):
         self._navigationRequest = True
-        logger.debug('navigate %s' % WebkitConnection.toPyObject(request.url()).ecode('utf-8'))
+        logger.debug('navigate %s' % WebkitConnection.toPyObject(request.url()).encode('utf-8'))
         return QWebPage.acceptNavigationRequest(self, frame, request, type)
     def userAgentForUrl(self, url):
         if self._userAgent:
