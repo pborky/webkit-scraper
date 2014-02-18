@@ -1,5 +1,8 @@
 """
 """
+from random import randint
+from threading import Thread
+from rpyc.utils.registry import UDPRegistryServer
 
 from webkit_scraper import Node, NodeFactory, WebPageStub
 
@@ -57,7 +60,60 @@ class _WebkitService(Service, WebPageStub):
 class WebkitService(_WebkitService): pass
 
 if __name__ == '__main__':
-
     logging.basicConfig(format='%(levelname)s:%(message)s',level=logging.INFO)
-    t = ThreadedServer(WebkitService, port = 18861)
-    t.start()
+
+    import os
+    import time
+    from multiprocessing import Process
+
+    DEFAULT_HOST = '127.0.0.1'
+    DEFAULT_NAME = 'WEBKIT'
+
+    class MyProcess(Process):
+        def __init__(self, port):
+            super(MyProcess, self).__init__()
+            self._port= port
+        def run(self):
+            self.t = ThreadedServer(WebkitService, hostname=DEFAULT_HOST, port=self._port)
+            self.t.start()
+            os._exit(0)
+
+    class RegistryServerHandler(Thread):
+        def __init__(self):
+            super(RegistryServerHandler, self).__init__()
+            self.server = UDPRegistryServer(port=18811, )
+        def run(self):
+            self.server.start()
+        def add(self, info):
+            self.server._add_service(DEFAULT_NAME, info)
+        def remove(self, info):
+            self.server._remove_service(DEFAULT_NAME, info)
+        def count(self):
+            return len(self.server.services.get(DEFAULT_NAME,()))
+
+    class MyProcessHandler(Thread):
+        def __init__(self, registry):
+            super(MyProcessHandler, self).__init__()
+            self.daemon = True
+            self._registry = registry
+        def run(self):
+            port = randint(10000,20000)
+            proces = MyProcess(port)
+            proces.start()
+            self._registry.add((DEFAULT_HOST,port))
+            proces.join()
+            self._registry.remove((DEFAULT_HOST,port))
+
+    registry = RegistryServerHandler()
+    registry.start()
+
+    while True:
+        try:
+            if registry.count()<4:
+                handler = MyProcessHandler(registry)
+                handler.start()
+            time.sleep(0.1)
+        except KeyboardInterrupt:
+            break
+
+    exit(0)
