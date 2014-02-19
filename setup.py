@@ -1,47 +1,20 @@
-from distutils.core import setup, Command
-from distutils.command.build import build as _build
-import os, sys
-import shutil
+from setuptools import setup, find_packages
+setup(
+    name = "webkit-scraper",
+    version = "0.1",
+    packages = ['webkit_scraper',],
+    scripts = ['webkit_service',],
 
-class build_server(_build):
-  description = 'custom build command'
-  sub_commands = []
+    install_requires = ['rpyc',],
 
-  def initialize_options(self):
-    _build.initialize_options(self)
-    self.cwd = None
-  def finalize_options(self):
-    _build.finalize_options(self)
-    self.cwd = os.getcwd()
-  def run(self):
-    if os.environ.get('READTHEDOCS', None) == 'True':
-      # won't build on readthedocs.org
-      return
-    assert os.getcwd() == self.cwd, 'Must be in package root.'
-    os.system('qmake && make')
-    try:
-      os.remove(os.path.join(self.build_purelib, 'webkit_server'))
-    except: pass      
-    try:
-      os.remove(os.path.join(self.build_platlib, 'webkit_server'))
-    except: pass
-    try:
-      os.makedirs(self.build_platlib)
-    except: pass
-    try:
-      os.makedirs(self.build_purelib)
-    except: pass
-    shutil.copy('src/webkit_server', self.build_purelib)
-    shutil.copy('capybara.js', self.build_platlib)
+    package_data = {
+        '': ['*.js',],
+        },
 
-setup(name='webkit-server',
-      version='0.8',
-      description='a Webkit-based, headless browser instance',
-      author='Niklas Baumstark',
-      author_email='niklas.baumstark@gmail.com',
-      license='MIT',
-      url='https://github.com/niklasb/webkit-server',
-      py_modules=['webkit_server', 'webkit_scraper', ],
-      cmdclass={
-        'build': build_server,
-        })
+    author = "pBorky",
+    author_email = "pborky@gmail.com",
+    description = "a Webkit-based, headless browser instance",
+    license = "MIT",
+    keywords = "hello world example examples",
+    url = "https://github.com/pborky/webkit-scraper",
+)
