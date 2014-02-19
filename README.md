@@ -1,9 +1,9 @@
 # Overview
 
-**Author:** Niklas Baumstark
+**Author:** Peter Boraros (based on Niklas Baumstark's webkit-server)
 
 A standalone version of the Webkit server included in [capybara-webkit][1].
-It includes a slim Python wrapper and the following improvements over the
+It is rewritten by pborky with PySide QT bindings and the following improvements over the
 original version from thoughtbot:
 
 * `Wait` command to wait for the current page to load
@@ -16,20 +16,15 @@ If you are interested in web scraping using this server, have a look at [dryscra
 
 # Building and Installing
 
-To install the Python binding (this also builds the server and places it into
-Python's `site-package` directory):
-
-    sudo python setup.py install
-
-If you don't need the Python bindings, you can also use the supplied `build.sh`
-shellscript to build the server only.
+It is recomended to used distribution version of PySide, e.g. for Ubuntu you should install 
+at least `python-pyside.qtwebkit` package. Then 
+invoke `pip install git+https://github.com/pborky/webkit-scraper.git` to install the server.
 
 # Contact, Bugs, Contributions
 
 If you have any problems with this software, don't hesitate to open an 
-issue on [Github](https://github.com/niklasb/webkit-server) or open a pull 
-request or write a mail to **niklas 
-baumstark at Gmail**.
+issue on [Github](https://github.com/pborky/webkit-scraper) or open a pull 
+request.
 
 # License
 
