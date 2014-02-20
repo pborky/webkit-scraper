@@ -205,7 +205,8 @@ class Command(object):
         self._kwargs = kwargs
         self.event = Event()
     def __call__(self, obj = None):
-        logger.info('issued command: %s(%s)'%(self.__class__.__name__, ', '.join(map(str,self._args))))
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug'issued command: %s(%s)'%(self.__class__.__name__, ', '.join(map(str,self._args))))
         try:
             if callable(self._callable):
                 if obj:
