@@ -36,7 +36,10 @@ class Driver( RemoteMixin,
     Keyword arguments are passed through to the underlying ``webkit_server.Client``
     constructor. By default, `node_factory_class` is set to use the dryscrape
     node implementation. """
-    def __init__(self, remote):
-        super(Driver, self).__init__(remote)
+    def __init__(self, connection):
+        super(Driver, self).__init__(connection.root)
+        self.connection=connection
+    def __del__(self):
+        del self.connection
     def xpath(self, xpath):
         return [ Node(n) for n in self._remote.xpath(xpath) ]
