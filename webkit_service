@@ -60,6 +60,34 @@ class _WebkitService(Service, WebPageStub):
         return 42
 class WebkitService(_WebkitService): pass
 
+@expose('discover')
+class _Discovery(Service):
+    services = {}
+    @classmethod
+    def add(cls, service, info):
+        if service not in cls.services:
+            cls.services[service] = set()
+        cls.services[service].add(info)
+    @classmethod
+    def remove(cls, service, info):
+        if service in cls.services and info in cls.services[service]:
+            cls.services[service].remove(info)
+    @classmethod
+    def count(cls, service):
+        if service in cls.services:
+            return len(cls.services[service])
+        return 0
+    @classmethod
+    def get(cls, service):
+        if service in cls.services:
+            s = list(cls.services[service])
+            return s[randint(0, len(s)-1)]
+        else:
+            return None
+    def discover(self, query):
+        return self.get(query)
+class Discovery(_Discovery): pass
+
 if __name__ == '__main__':
     logging.basicConfig(format='%(levelname)s:%(message)s',level=logging.INFO)
 
@@ -88,15 +116,15 @@ if __name__ == '__main__':
     class RegistryServerHandler(Thread):
         def __init__(self):
             super(RegistryServerHandler, self).__init__()
-            self.server = MyRegistrySever(port=18811, )
+            self.server = ThreadedServer(Discovery, hostname=DEFAULT_HOST, port=18811)
         def run(self):
             self.server.start()
         def add(self, info):
-            self.server._add_service(DEFAULT_NAME, info)
+            return Discovery.add(DEFAULT_NAME, info)
         def remove(self, info):
-            self.server._remove_service(DEFAULT_NAME, info)
+            return Discovery.remove(DEFAULT_NAME, info)
         def count(self):
-            return len(self.server.services.get(DEFAULT_NAME,()))
+            return Discovery.count(DEFAULT_NAME)
 
     class MyProcessHandler(Thread):
         def __init__(self, registry):
