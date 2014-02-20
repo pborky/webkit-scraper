@@ -1,18 +1,14 @@
 """
-This is pythonic implementation of webkit-server using PyQt4.
-Based on https://github.com/niklasb/webkit-server
+Example client.
 """
+from webkit_scraper.driver import Discovery
 
-import rpyc
-import time
-from webkit_scraper.driver import Driver
-conn = rpyc.connect('localhost', 18811)
-host = conn.root.discover('WEBKIT')
-if host is None:
-  print 'Failed to discover WEBKIT service.'
-  exit(1)
-conn = rpyc.connect(*host)
-c = Driver(conn)
+DISCOVERY_HOST = 'localhost'
+DISCOVERY_PORT = 18811
+SERVICE_NAME = 'WEBKIT'
+
+discovery = Discovery(DISCOVERY_HOST, DISCOVERY_PORT)
+c = discovery.driver(SERVICE_NAME)
 USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chromium/28.0.1500.71 Chrome/28.0.1500.71 '
 ACCEPT_LANG = 'en-US,en;q=0.8'
 ACCEPT = 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8'
@@ -26,7 +22,7 @@ c.clear_cookies()
 c.visit('http://search.yahoo.com/')
 c.wait()
 n = c.at_xpath('//input[@name="p"]')
-n.set('"4FA" buy')
+n.set('webkit scraper')
 f = n.form()
 f.submit()
 for i in range(5):
