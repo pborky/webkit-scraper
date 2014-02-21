@@ -185,24 +185,32 @@ if __name__ == '__main__':
             self._registry.add(process, (DEFAULT_HOST,port))
             try:
                 while True:
-                        process.join(0.1)
-                        if process.rss is None or process.create_time is None:
-                            continue
-                        if process.rss > UNREG_RSS or process.create_time - time.time() > UNREG_TIMEOUT:
-                            self._registry.remove(process, (DEFAULT_HOST,port))
-                        if process.rss > KILL_RSS or process.create_time - time.time() > KILL_TIMEOUT:
-                            process.kill()
+                    process.join(0.1)
+                    if not process.is_alive():
+                        logger.info('Process pid %d found dead.' % process.pid)
+                        break
+                    if process.rss is None or process.create_time is None:
+                        continue
+                    if process.rss > UNREG_RSS or process.create_time - time.time() > UNREG_TIMEOUT:
+                        self._registry.remove(process, (DEFAULT_HOST,port))
+                    if process.rss > KILL_RSS or process.create_time - time.time() > KILL_TIMEOUT:
+                        process.kill()
             finally:
                 self._registry.remove(process, (DEFAULT_HOST,port))
 
     registry = RegistryServerHandler()
     registry.start()
 
+    timeout = 40
+
     while True:
         try:
-            if registry.count()<6:
+            if registry.count()<4:
                 handler = MyProcessHandler(registry)
                 handler.start()
+                time.sleep(timeout)
+                if timeout > 0:
+                    timeout -= 10
             time.sleep(0.1)
         except KeyboardInterrupt:
             break
