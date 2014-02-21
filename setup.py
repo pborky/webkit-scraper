@@ -5,7 +5,7 @@ setup(
     packages = ['webkit_scraper',],
     scripts = ['webkit_service',],
 
-    install_requires = ['rpyc',],
+    install_requires = ['rpyc', 'psutil',],
 
     package_data = {
         '': ['*.js',],

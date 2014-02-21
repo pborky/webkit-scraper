@@ -3,6 +3,7 @@
 """
 from random import randint
 from threading import Thread
+from psutil import NoSuchProcess
 from rpyc.utils.registry import UDPRegistryServer
 
 from webkit_scraper import Node, NodeFactory, WebPageStub
@@ -12,6 +13,16 @@ from rpyc import Service
 
 import logging
 logger = logging.getLogger(__name__)
+
+DEFAULT_HOST = '127.0.0.1'
+DISCOVERY_PORT =  18811
+SERVICE_NAME = 'WEBKIT'
+
+UNREG_RSS = 200e6
+UNREG_TIMEOUT = 600
+KILL_RSS = 256e6
+KILL_TIMEOUT = 900
+
 
 def expose(*names, **kw):
     def decorate(Class):
@@ -52,26 +63,29 @@ class _WebkitService(Service, WebPageStub):
         WebPageStub.__init__(self, node_factory_class=node_factory_class)
 
     def on_connect(self):
-        print('Client conected.')
+        logger.info('Client conected.')
     def on_disconnect(self):
-        print('Client disconected. Stopping Webkit instance.')
+        logger.info('Client disconected. Stopping Webkit instance.')
         self.stop()
-    def exposed_get_answer(self):
-        return 42
 class WebkitService(_WebkitService): pass
 
 @expose('discover')
 class _Discovery(Service):
     services = {}
+    processes = {}
     @classmethod
-    def add(cls, service, info):
+    def add(cls, process, service, info):
+        logger.info('Registering server pid %d listening at %s:%d' % (process.pid, info[0], info[1]))
+        cls.processes[process.pid] = process
         if service not in cls.services:
             cls.services[service] = set()
-        cls.services[service].add(info)
+        cls.services[service].add((process.pid, info))
     @classmethod
-    def remove(cls, service, info):
-        if service in cls.services and info in cls.services[service]:
-            cls.services[service].remove(info)
+    def remove(cls, process, service, info):
+        logger.info('Deregistering server pid %d listening at %s:%d' % (process.pid, info[0], info[1]))
+        cls.processes[process.pid] = process
+        if service in cls.services and (process.pid,info) in cls.services[service]:
+            cls.services[service].remove((process.pid, info))
     @classmethod
     def count(cls, service):
         if service in cls.services:
@@ -81,7 +95,8 @@ class _Discovery(Service):
     def get(cls, service):
         if service in cls.services:
             s = list(cls.services[service])
-            return s[randint(0, len(s)-1)]
+            pid,host = s[randint(0, len(s)-1)]
+            return host
         else:
             return None
     def discover(self, query):
@@ -95,9 +110,6 @@ if __name__ == '__main__':
     import time
     from multiprocessing import Process
 
-    DEFAULT_HOST = '127.0.0.1'
-    DEFAULT_NAME = 'WEBKIT'
-
     class MyRegistrySever(UDPRegistryServer):
         def cmd_register(self, host, names, port):
             pass
@@ -108,23 +120,58 @@ if __name__ == '__main__':
         def __init__(self, port):
             super(MyProcess, self).__init__()
             self._port= port
+            self._server = ThreadedServer(WebkitService, hostname=DEFAULT_HOST, port=self._port)
+            self._ps = None
         def run(self):
-            self.t = ThreadedServer(WebkitService, hostname=DEFAULT_HOST, port=self._port)
-            self.t.start()
+            self._server.start()
             os._exit(0)
+        @property
+        def ps(self):
+            if self._ps is None:
+                import psutil
+                try:
+                    self._ps  = psutil.Process(self.pid)
+                except NoSuchProcess:
+                    pass
+            if self._ps is not None and not self._ps.is_running():
+                self._ps = None
+            return self._ps
+        @property
+        def port(self):
+            return self._port
+        @property
+        def service_name(self):
+            return self._server.service.get_service_name()
+        @property
+        def create_time(self):
+            return self.ps.create_time if self.ps else None
+        @property
+        def mem(self):
+            return self.ps.get_memory_info()  if self.ps else None
+        @property
+        def rss(self):
+            return self.mem[0] if self.mem else None
+        @property
+        def vms(self):
+            return self.mem[1] if self.mem else None
+        def kill(self):
+            logger.warning('Killing process pid %d.'%self.pid)
+            self.ps.kill()
+        def terminate(self):
+            self.ps.terminate()
 
     class RegistryServerHandler(Thread):
         def __init__(self):
             super(RegistryServerHandler, self).__init__()
-            self.server = ThreadedServer(Discovery, hostname=DEFAULT_HOST, port=18811)
+            self.server = ThreadedServer(Discovery, hostname=DEFAULT_HOST, port=DISCOVERY_PORT)
         def run(self):
             self.server.start()
-        def add(self, info):
-            return Discovery.add(DEFAULT_NAME, info)
-        def remove(self, info):
-            return Discovery.remove(DEFAULT_NAME, info)
+        def add(self, process, info):
+            return Discovery.add(process, SERVICE_NAME, info)
+        def remove(self, process, info):
+            return Discovery.remove(process, SERVICE_NAME, info)
         def count(self):
-            return Discovery.count(DEFAULT_NAME)
+            return Discovery.count(SERVICE_NAME)
 
     class MyProcessHandler(Thread):
         def __init__(self, registry):
@@ -133,27 +180,29 @@ if __name__ == '__main__':
             self._registry = registry
         def run(self):
             port = randint(10000,20000)
-            proces = MyProcess(port)
-            proces.start()
-            self._registry.add((DEFAULT_HOST,port))
+            process = MyProcess(port)
+            process.start()
+            self._registry.add(process, (DEFAULT_HOST,port))
             try:
-                proces.join()
+                while True:
+                        process.join(0.1)
+                        if process.rss is None or process.create_time is None:
+                            continue
+                        if process.rss > UNREG_RSS or process.create_time - time.time() > UNREG_TIMEOUT:
+                            self._registry.remove(process, (DEFAULT_HOST,port))
+                        if process.rss > KILL_RSS or process.create_time - time.time() > KILL_TIMEOUT:
+                            process.kill()
             finally:
-                self._registry.remove((DEFAULT_HOST,port))
+                self._registry.remove(process, (DEFAULT_HOST,port))
 
     registry = RegistryServerHandler()
     registry.start()
-
-    timeout = 40
 
     while True:
         try:
             if registry.count()<6:
                 handler = MyProcessHandler(registry)
                 handler.start()
-                time.sleep(timeout)
-                if timeout > 0:
-                    timeout -= 10
             time.sleep(0.1)
         except KeyboardInterrupt:
             break
