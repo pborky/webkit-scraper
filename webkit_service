@@ -79,12 +79,14 @@ class _Discovery(Service):
         cls.processes[process.pid] = process
         if service not in cls.services:
             cls.services[service] = set()
-        cls.services[service].add((process.pid, info))
+        if (process.pid,info) not in cls.services[service]:
+            cls.services[service].add((process.pid, info))
+        else:
+            logger.warn('Server pid %d already registered and listening at %s:%d' % (process.pid, info[0], info[1]))
     @classmethod
     def remove(cls, process, service, info):
-        logger.info('Deregistering server pid %d listening at %s:%d' % (process.pid, info[0], info[1]))
-        cls.processes[process.pid] = process
         if service in cls.services and (process.pid,info) in cls.services[service]:
+            logger.info('Deregistering server pid %d listening at %s:%d' % (process.pid, info[0], info[1]))
             cls.services[service].remove((process.pid, info))
     @classmethod
     def count(cls, service):
@@ -191,10 +193,13 @@ if __name__ == '__main__':
                         break
                     if process.rss is None or process.create_time is None:
                         continue
-                    if process.rss > UNREG_RSS or process.create_time - time.time() > UNREG_TIMEOUT:
+                    if (process.rss > UNREG_RSS) or (time.time() - process.create_time > UNREG_TIMEOUT):
                         self._registry.remove(process, (DEFAULT_HOST,port))
-                    if process.rss > KILL_RSS or process.create_time - time.time() > KILL_TIMEOUT:
+                    if (process.rss > KILL_RSS) or (time.time() - process.create_time > KILL_TIMEOUT):
                         process.kill()
+                        while process.is_alive():
+                            process.join(1)
+                        break
             finally:
                 self._registry.remove(process, (DEFAULT_HOST,port))
 
