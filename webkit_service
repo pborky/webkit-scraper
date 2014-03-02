@@ -114,7 +114,7 @@ class Discovery(_Discovery): pass
 if __name__ == '__main__':
     logging.basicConfig(format='%(levelname)s:%(message)s',level=logging.INFO)
 
-    import os
+    import os , shutil, stat
     import time
     from multiprocessing import Process
 
@@ -132,6 +132,7 @@ if __name__ == '__main__':
             self._socket_path = socket_path
             if self.socket:
                 self._server = ThreadedServer(WebkitService, socket_path=self.socket)
+                os.chmod(self.socket, stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
             else:
                 self._server = ThreadedServer(WebkitService, hostname=self.host, port=self.port)
             self._ps = None
@@ -195,12 +196,12 @@ if __name__ == '__main__':
     class RegistryServerHandler(Thread):
         def __init__(self):
             super(RegistryServerHandler, self).__init__()
-            import os, shutil
             if os.path.exists(UNIX_SOCKET):
                 shutil.rmtree(UNIX_SOCKET)
             os.mkdir(UNIX_SOCKET)
             path = '%s/%d' % (UNIX_SOCKET, DISCOVERY_PORT)
             self.server = ThreadedServer(Discovery, socket_path=path)
+            os.chmod(path, stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
         def run(self):
             self.server.start()
         def add(self, process):
