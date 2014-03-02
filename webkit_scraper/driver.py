@@ -64,20 +64,27 @@ class Driver( RemoteMixin,
         return [ Node(n, self._connection) for n in self._remote.xpath(xpath) ]
 
 class Discovery:
-    def __init__(self, host, port):
+    def __init__(self, host=None, port=None, path=None):
         self.host = host
         self.port = port
+        self.path = path
         self.discoverer = None
     def discover(self, service):
-        import rpyc
+        from rpyc.utils.factory import unix_connect, connect
         if self.discoverer is None or self.discoverer.closed:
             try:
-                self.discoverer = rpyc.connect(self.host, self.port)
+                if self.path:
+                    self.discoverer = unix_connect(self.path)
+                else:
+                    self.discoverer = connect(self.host, self.port)
             except:
                 raise DiscoveryError('Discovery service not found.')
-        host = self.discoverer.root.discover(service)
-        if host is not None:
-            return rpyc.connect(*host)
+        info = dict(self.discoverer.root.discover(service))
+        if info is not None:
+            if 'socket_path' in info:
+                return unix_connect(info.get('socket_path'))
+            else:
+                return connect(info.get('hostname'), info.get('port'))
         else:
             raise DiscoveryError('Service discovery failed.')
     def driver(self, service):

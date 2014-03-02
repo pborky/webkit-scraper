@@ -5,9 +5,10 @@ from webkit_scraper.driver import Discovery
 
 DISCOVERY_HOST = 'localhost'
 DISCOVERY_PORT = 18811
+DISCOVERY_PATH = '/tmp/webkit_service/18811'
 SERVICE_NAME = 'WEBKIT'
 
-discovery = Discovery(DISCOVERY_HOST, DISCOVERY_PORT)
+discovery = Discovery(path=DISCOVERY_PATH)
 c = discovery.driver(SERVICE_NAME)
 USER_AGENT = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chromium/28.0.1500.71 Chrome/28.0.1500.71 '
 ACCEPT_LANG = 'en-US,en;q=0.8'
