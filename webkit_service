@@ -196,7 +196,8 @@ if __name__ == '__main__':
         def __init__(self):
             super(RegistryServerHandler, self).__init__()
             import os, shutil
-            shutil.rmtree(UNIX_SOCKET)
+            if os.path.exists(UNIX_SOCKET):
+                shutil.rmtree(UNIX_SOCKET)
             os.mkdir(UNIX_SOCKET)
             path = '%s/%d' % (UNIX_SOCKET, DISCOVERY_PORT)
             self.server = ThreadedServer(Discovery, socket_path=path)
