@@ -92,7 +92,7 @@ class _Discovery(Service):
     def remove(cls, process, service):
         info = frozenset(process.info.items())
         if service in cls.services and (process.pid,info) in cls.services[service]:
-            logger.info('Deregistering server pid %d listening on %s' % (process.pid, cls.socket_info_str(info)))
+            logger.info('Deregistering server pid %d listening on %s' % (process.pid, cls.socket_info_str(process.info)))
             cls.services[service].remove((process.pid, info))
     @classmethod
     def count(cls, service):
@@ -186,6 +186,8 @@ if __name__ == '__main__':
             return self.mem[1] if self.mem else None
         def kill(self):
             logger.warning('Killing process pid %d.'%self.pid)
+            if self.socket:
+                os.remove(self.socket)
             self.ps.kill()
         def terminate(self):
             self.ps.terminate()
@@ -193,12 +195,10 @@ if __name__ == '__main__':
     class RegistryServerHandler(Thread):
         def __init__(self):
             super(RegistryServerHandler, self).__init__()
-            import os
-            if not os.path.exists(UNIX_SOCKET):
-                os.mkdir(UNIX_SOCKET)
+            import os, shutil
+            shutil.rmtree(UNIX_SOCKET)
+            os.mkdir(UNIX_SOCKET)
             path = '%s/%d' % (UNIX_SOCKET, DISCOVERY_PORT)
-            if os.path.exists(path):
-                raise Exception('Cannot bind discovery socket to path %s.'% path)
             self.server = ThreadedServer(Discovery, socket_path=path)
         def run(self):
             self.server.start()
