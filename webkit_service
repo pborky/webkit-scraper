@@ -149,14 +149,14 @@ if __name__ == '__main__':
             self._port= port
             self._host = host
             self._socket_path = socket_path
-            if self.socket:
-                self._server = ThreadedServer(WebkitService, socket_path=self.socket)
-                os.chmod(self.socket, stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
-            else:
-                self._server = ThreadedServer(WebkitService, hostname=self.host, port=self.port)
             self._ps = None
         def run(self):
-            self._server.start()
+            if self.socket:
+                server = ThreadedServer(WebkitService, socket_path=self.socket)
+                os.chmod(self.socket, stat.S_IRWXU | stat.S_IRWXG | stat.S_IRWXO)
+            else:
+                server = ThreadedServer(WebkitService, hostname=self.host, port=self.port)
+            server.start()
             os._exit(0)
         @property
         def ps(self):
@@ -189,9 +189,6 @@ if __name__ == '__main__':
                     'hostname': self.host,
                     'port': self.port,
                     }
-        @property
-        def service_name(self):
-            return self._server.service.get_service_name()
         @property
         def create_time(self):
             return self.ps.create_time if self.ps else None
