@@ -2,7 +2,7 @@
 """
 """
 from random import randint
-from threading import Thread
+from threading import Thread, Lock
 from psutil import NoSuchProcess
 from rpyc.utils.registry import UDPRegistryServer
 
@@ -18,12 +18,14 @@ DEFAULT_HOST = '127.0.0.1'
 DISCOVERY_PORT =  18811
 SERVICE_NAME = 'WEBKIT'
 UNIX_SOCKET = '/tmp/webkit_service'
+UNIX_SOCKET_NAMES = (10000,20000)
 
 UNREG_RSS = 200e6
 UNREG_TIMEOUT = 600
 KILL_RSS = 256e6
 KILL_TIMEOUT = 900
 
+PROCESSES=4
 
 def expose(*names, **kw):
     def decorate(Class):
@@ -74,39 +76,56 @@ class WebkitService(_WebkitService): pass
 class _Discovery(Service):
     services = {}
     processes = {}
+    lock = Lock()
     @staticmethod
     def socket_info_str(info):
         return  ('%(socket_path)s' if 'socket_path' in info else '[%(hostname)s]:%(port)d' ) % info
     @classmethod
     def add(cls, process, service):
-        logger.info('Registering server pid %d listening on %s' % (process.pid, cls.socket_info_str(process.info)))
-        cls.processes[process.pid] = process
-        if service not in cls.services:
-            cls.services[service] = set()
-        info = frozenset(process.info.items())
-        if (process.pid,info) not in cls.services[service]:
-            cls.services[service].add((process.pid, info))
-        else:
-            logger.warn('Server pid %d already registered and listening on %s' % (process.pid, cls.socket_info_str(process.info)))
+        cls.lock.acquire()
+        try:
+            logger.info('Registering server pid %d listening on %s' % (process.pid, cls.socket_info_str(process.info)))
+            cls.processes[process.pid] = process
+            if service not in cls.services:
+                cls.services[service] = set()
+            info = frozenset(process.info.items())
+            if (process.pid,info) not in cls.services[service]:
+                cls.services[service].add((process.pid, info))
+            else:
+                logger.warn('Server pid %d already registered and listening on %s' % (process.pid, cls.socket_info_str(process.info)))
+        finally:
+            cls.lock.release()
     @classmethod
     def remove(cls, process, service):
-        info = frozenset(process.info.items())
-        if service in cls.services and (process.pid,info) in cls.services[service]:
-            logger.info('Deregistering server pid %d listening on %s' % (process.pid, cls.socket_info_str(process.info)))
-            cls.services[service].remove((process.pid, info))
+        cls.lock.acquire()
+        try:
+            info = frozenset(process.info.items())
+            if service in cls.services and (process.pid,info) in cls.services[service]:
+                logger.info('Deregistering server pid %d listening on %s' % (process.pid, cls.socket_info_str(process.info)))
+                cls.services[service].remove((process.pid, info))
+        finally:
+            cls.lock.release()
     @classmethod
     def count(cls, service):
-        if service in cls.services:
-            return len(cls.services[service])
-        return 0
+        cls.lock.acquire()
+        try:
+            if service in cls.services:
+                return len(cls.services[service])
+            return 0
+        finally:
+            cls.lock.release()
     @classmethod
     def get(cls, service):
-        if service in cls.services:
-            s = list(cls.services[service])
-            pid,info = s[randint(0, len(s)-1)]
-            return list(info)
-        else:
-            return None
+        cls.lock.acquire()
+        try:
+            if service in cls.services:
+                s = list(cls.services[service])
+                pid,info = s[randint(0, len(s)-1)]
+                return list(info)
+            else:
+                return None
+        finally:
+            cls.lock.release()
     def discover(self, query):
         return self.get(query)
 class Discovery(_Discovery): pass
@@ -222,13 +241,13 @@ if __name__ == '__main__':
                 os.mkdir(UNIX_SOCKET)
             path = '/'
             while os.path.exists(path):
-                path = '%s/%d' % (UNIX_SOCKET, randint(10000,20000))
+                path = '%s/%d' % (UNIX_SOCKET, randint(*UNIX_SOCKET_NAMES))
             process = MyProcess(socket_path = path)
             process.start()
             self._registry.add(process)
             try:
                 while True:
-                    process.join(0.1)
+                    process.join(1)
                     if not process.is_alive():
                         logger.info('Process pid %d found dead.' % process.pid)
                         break
@@ -251,13 +270,13 @@ if __name__ == '__main__':
 
     while True:
         try:
-            if registry.count()<4:
+            if registry.count()<PROCESSES:
                 handler = MyProcessHandler(registry)
                 handler.start()
                 time.sleep(timeout)
                 if timeout > 0:
                     timeout -= 10
-            time.sleep(0.1)
+            time.sleep(1)
         except KeyboardInterrupt:
             break
 
