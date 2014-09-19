@@ -6,7 +6,7 @@ setup(
     scripts = ['webkit_service',],
 
     install_requires = [
-        'rpyc', 
+        'rpyc==3.2.3', 
         'psutil', 
         'dryscrape==0.8',
       ],
