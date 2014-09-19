@@ -18,7 +18,7 @@ If you are interested in web scraping using this server, have a look at [dryscra
 
 It is recomended to used distribution version of PySide, e.g. for Ubuntu you should install 
 at least `python-pyside.qtwebkit` package. Then 
-invoke `pip install git+https://github.com/pborky/webkit-scraper.git` to install the server.
+invoke `pip install --process-dependency-links git+https://github.com/pborky/webkit-scraper.git` to install the server.
 
 # Contact, Bugs, Contributions
 

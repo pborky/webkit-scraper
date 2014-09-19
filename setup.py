@@ -5,10 +5,18 @@ setup(
     packages = ['webkit_scraper',],
     scripts = ['webkit_service',],
 
-    install_requires = ['rpyc', 'psutil',],
+    install_requires = [
+        'rpyc', 
+        'psutil', 
+        'dryscrape==0.8',
+      ],
+
+    dependency_links = [
+        'git+https://github.com/pborky/dryscrape.git#egg=dryscrape-0.8',
+      ],
 
     package_data = {
-        '': ['*.js',],
+          '': ['*.js',],
         },
 
     author = "pBorky",
